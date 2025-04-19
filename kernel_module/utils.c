@@ -1,12 +1,12 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
-#include <linux/fs.h>         // vfs_mkdir
-#include <linux/time.h>       // ktime_get_real_ts64()
-#include <linux/path.h>       // kern_path
-#include <linux/cred.h>       // current_euid()
-#include <linux/slab.h>       // kmalloc e kfree
-#include <linux/namei.h>      // kern_path
+#include <linux/fs.h>        
+#include <linux/time.h>       
+#include <linux/path.h>       
+#include <linux/cred.h>       
+#include <linux/slab.h>       
+#include <linux/namei.h>      
 #include <linux/errno.h>
 #include <linux/dcache.h>
 #include <linux/mount.h>
@@ -92,13 +92,11 @@ int create_snapshot_directory(char *dev_name)
     char dir_name[256];
     struct timespec64 ts;
 
-    // --- PRIMA PARTE: assicura che /snapshot esista ---
 
     ret = kern_path("/snapshot", LOOKUP_DIRECTORY, &path);
     if (ret != 0) {
         pr_info("[snapshot] La directory /snapshot non esiste, la creo\n");
 
-        // Recupera inode di /
         ret = kern_path("/", LOOKUP_DIRECTORY, &path);
         if (ret != 0) {
             pr_err("[snapshot] Errore nel trovare la root /\n");
@@ -127,9 +125,8 @@ int create_snapshot_directory(char *dev_name)
         path_put(&path);
     }
 
-    // --- SECONDA PARTE: crea la directory /snapshot/loop0_TIMESTAMP ---
 
-    // Timestamp corrente
+    // Timestamp da sistemare
     ktime_get_real_ts64(&ts);
     snprintf(dir_name, sizeof(dir_name), "/snapshot/%s_%lld%02lld%02lld_%02lld%02lld%02lld",
              dev_name,
