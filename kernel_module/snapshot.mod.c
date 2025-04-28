@@ -79,6 +79,8 @@ __used __section("__versions") =
 	"__x86_return_thunk\0\0"
 	"\x10\x00\x00\x00\x5a\x25\xd5\xe2"
 	"strcmp\0\0"
+	"\x1c\x00\x00\x00\xbc\xd6\x22\x85"
+	"strncpy_from_user\0\0\0"
 	"\x24\x00\x00\x00\x33\xb3\x91\x60"
 	"unregister_chrdev_region\0\0\0\0"
 	"\x18\x00\x00\x00\x38\xf0\x13\x32"
@@ -89,6 +91,10 @@ __used __section("__versions") =
 	"__kmalloc_cache_noprof\0\0"
 	"\x10\x00\x00\x00\xb3\x2b\xda\xca"
 	"dput\0\0\0\0"
+	"\x18\x00\x00\x00\x6e\xa2\x66\x3f"
+	"register_kprobe\0"
+	"\x1c\x00\x00\x00\x1d\xe6\x10\xbb"
+	"unregister_kprobe\0\0\0"
 	"\x14\x00\x00\x00\x1e\x70\xe8\x75"
 	"cdev_init\0\0\0"
 	"\x18\x00\x00\x00\xaf\xfc\x16\x7b"
@@ -102,4 +108,4 @@ __used __section("__versions") =
 MODULE_INFO(depends, "");
 
 
-MODULE_INFO(srcversion, "224EDF0215D7DEE77E455F1");
+MODULE_INFO(srcversion, "8B6A5A7AE9A07D55FB6FF9D");

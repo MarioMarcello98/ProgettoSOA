@@ -22,6 +22,8 @@ bool password_valid(const char *passwd);
 int add_snapshot_device(const char *dev_name);
 int remove_snapshot_device(const char *dev_name);
 bool is_snapshot_active(const char *dev_name);
-int create_snapshot_directory(char *dev_name);
+int create_snapshot_directory(void);
+int create_device_directory(char *dev_name);
+
 
 #endif 

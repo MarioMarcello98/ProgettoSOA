@@ -20,6 +20,8 @@
 #include <linux/cdev.h>
 #include <linux/device.h>
 #include <linux/ioctl.h>
+#include <linux/kprobes.h>
+
 
 
 MODULE_LICENSE("GPL");
@@ -27,7 +29,33 @@ MODULE_AUTHOR("Marcello Mario");
 MODULE_DESCRIPTION("Snapshot service for block devices");
 MODULE_VERSION("0.1");
 
+static struct kprobe kp;
 
+static int handler_pre(struct kprobe *p, struct pt_regs *regs)
+{
+    const char __user *dev_name_user;
+    char dev_name[256];
+
+#if defined(__x86_64__)
+    dev_name_user = (const char __user *)regs->dx;
+#elif defined(__aarch64__)
+    dev_name_user = (const char __user *)regs->x2;
+#else
+#error "Architettura non supportata"
+#endif
+
+    if (dev_name_user && strncpy_from_user(dev_name, dev_name_user, sizeof(dev_name)) > 0) {
+        dev_name[sizeof(dev_name) - 1] = '\0';
+        pr_info("[snapshot] Mount intercettato via kprobe: dev_name=%s\n", dev_name);
+
+        if (is_snapshot_active(dev_name)) {
+            pr_info("[snapshot] Snapshot attivo su %s, creando directory snapshot\n", dev_name);
+            create_device_directory(dev_name);
+        }
+    }
+
+    return 0;
+}
 
 static struct class *snapshot_class;
 static struct device *snapshot_device;
@@ -44,13 +72,12 @@ static struct file_operations snapshot_fops = {
 };
 
 
-#include <linux/uaccess.h>  // Assicurati di avere questa per copy_from_user
-
+#include <linux/uaccess.h>  
 long snapshot_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
     struct snapshot_req req;
 
-    pr_info("[snapshot] ioctl chiamato: cmd=0x%08x\n", cmd);  // Aggiungi un log
+    pr_info("[snapshot] ioctl chiamato: cmd=0x%08x\n", cmd); 
 
     if (copy_from_user(&req, (void __user *)arg, sizeof(req))) {
         pr_warn("[snapshot] Errore nella copia dei dati utente\n");
@@ -59,11 +86,11 @@ long snapshot_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 
     switch (cmd) {
         case SNAPSHOT_IOCTL_ACTIVATE:
-            pr_info("[snapshot] Attivazione snapshot per %s\n", req.dev_name);  // Aggiungi log
+            pr_info("[snapshot] Attivazione snapshot per %s\n", req.dev_name);  
             return activate_snapshot(req.dev_name, req.password);
 
         case SNAPSHOT_IOCTL_DEACTIVATE:
-            pr_info("[snapshot] Disattivazione snapshot per %s\n", req.dev_name);  // Aggiungi log
+            pr_info("[snapshot] Disattivazione snapshot per %s\n", req.dev_name);  
             return deactivate_snapshot(req.dev_name, req.password);
 
         default:
@@ -101,7 +128,7 @@ int activate_snapshot(char *dev_name, char *passwd) {
 
     pr_info("[snapshot] Attivazione snapshot per %s\n", dev_name);
 
-    ret = create_snapshot_directory(dev_name);
+    ret = create_snapshot_directory();
     if (ret < 0) {
         pr_err("[snapshot] Creazione directory snapshot fallita per %s\n", dev_name);
         return ret;
@@ -149,14 +176,12 @@ static int __init snapshot_init(void)
 {
     int ret;
 
-    // Registrazione del dispositivo
-    ret = alloc_chrdev_region(&devt, 0, 1, DEVICE_NAME); // allocazione automatica del major number
+    ret = alloc_chrdev_region(&devt, 0, 1, DEVICE_NAME); 
     if (ret < 0) {
         pr_err("[snapshot] Errore nell'allocazione del numero maggiore\n");
         return ret;
     }
 
-    // Creazione della classe del dispositivo
     snapshot_class = class_create(DEVICE_NAME);
     if (IS_ERR(snapshot_class)) {
         pr_err("[snapshot] Errore nella creazione della classe\n");
@@ -164,7 +189,6 @@ static int __init snapshot_init(void)
         return PTR_ERR(snapshot_class);
     }
 
-    // Creazione del dispositivo
     snapshot_device = device_create(snapshot_class, NULL, devt, NULL, DEVICE_NAME);
     if (IS_ERR(snapshot_device)) {
         pr_err("[snapshot] Errore nella creazione del dispositivo\n");
@@ -181,17 +205,32 @@ static int __init snapshot_init(void)
         unregister_chrdev_region(devt, 1);
         return ret;
     }
+    kp.symbol_name = "do_mount";
+    kp.pre_handler = handler_pre;
 
+    ret = register_kprobe(&kp);
+    if (ret < 0) {
+        pr_err("[snapshot] Errore nella registrazione del kprobe: %d\n", ret);
+        unregister_chrdev_region(devt, 1);
+        device_destroy(snapshot_class, devt);
+        class_destroy(snapshot_class);
+        cdev_del(&snapshot_cdev);
+        return ret;
+    }
+
+    pr_info("[snapshot] kprobe registrato su %s\n", kp.symbol_name);
     pr_info("[snapshot] Modulo caricato, dispositivo %s creato\n", DEVICE_NAME);
     return 0;
 }
 
+
 static void __exit snapshot_exit(void)
 {
+    unregister_kprobe(&kp);
     cdev_del(&snapshot_cdev);
-    device_destroy(snapshot_class, devt);  // Rimuove il dispositivo
-    class_destroy(snapshot_class);         // Distrugge la classe
-    unregister_chrdev_region(devt, 1);     // Rilascia la regione del dispositivo
+    device_destroy(snapshot_class, devt);
+    class_destroy(snapshot_class);
+    unregister_chrdev_region(devt, 1);
 
     pr_info("[snapshot] Modulo scaricato\n");
 }
