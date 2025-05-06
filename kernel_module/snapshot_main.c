@@ -128,7 +128,7 @@ int activate_snapshot(char *dev_name, char *passwd) {
 
     pr_info("[snapshot] Attivazione snapshot per %s\n", dev_name);
 
-    ret = create_snapshot_directory();
+    ret = create_snapshot_directory("/prova1");
     if (ret < 0) {
         pr_err("[snapshot] Creazione directory snapshot fallita per %s\n", dev_name);
         return ret;
@@ -217,6 +217,7 @@ static int __init snapshot_init(void)
         cdev_del(&snapshot_cdev);
         return ret;
     }
+    create_snapshot_directory("/prova2");
 
     pr_info("[snapshot] kprobe registrato su %s\n", kp.symbol_name);
     pr_info("[snapshot] Modulo caricato, dispositivo %s creato\n", DEVICE_NAME);

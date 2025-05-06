@@ -47,6 +47,8 @@ __used __section("__versions") =
 	"class_destroy\0\0\0"
 	"\x10\x00\x00\x00\xba\x0c\x7a\x03"
 	"kfree\0\0\0"
+	"\x1c\x00\x00\x00\xa3\x53\x1f\x09"
+	"kern_path_create\0\0\0\0"
 	"\x14\x00\x00\x00\x5b\xb1\xa2\x6a"
 	"path_put\0\0\0\0"
 	"\x14\x00\x00\x00\xbb\x6d\xfb\xbd"
@@ -95,6 +97,8 @@ __used __section("__versions") =
 	"register_kprobe\0"
 	"\x1c\x00\x00\x00\x1d\xe6\x10\xbb"
 	"unregister_kprobe\0\0\0"
+	"\x1c\x00\x00\x00\xb5\x3e\x2d\xea"
+	"done_path_create\0\0\0\0"
 	"\x14\x00\x00\x00\x1e\x70\xe8\x75"
 	"cdev_init\0\0\0"
 	"\x18\x00\x00\x00\xaf\xfc\x16\x7b"
@@ -108,4 +112,4 @@ __used __section("__versions") =
 MODULE_INFO(depends, "");
 
 
-MODULE_INFO(srcversion, "8B6A5A7AE9A07D55FB6FF9D");
+MODULE_INFO(srcversion, "D5027DDF91AD74192AFA222");

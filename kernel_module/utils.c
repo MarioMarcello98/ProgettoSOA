@@ -83,52 +83,48 @@ bool is_snapshot_active(const char *dev_name) {
     return found;
 }
 
-int create_snapshot_directory(void)
+int create_snapshot_directory(const char *path_str)
 {
+    struct path existing_path;
     struct path path;
-    struct inode *inode_dir;
     struct dentry *dentry;
+    struct mnt_idmap *idmap;
+    int mode = S_IFDIR | 0755;
     int ret;
 
-    // Controlla se la directory principale esiste
-    ret = kern_path("/prova1", LOOKUP_DIRECTORY, &path);
+    // 1️⃣ Controlla se la directory esiste già
+    ret = kern_path(path_str, LOOKUP_FOLLOW, &existing_path);
     if (ret == 0) {
-        pr_info("[snapshot] La directory /prova1 esiste già\n");
-        path_put(&path);
-        return 0;
+        // Percorso esiste, vediamo se è una directory
+        if (d_is_dir(existing_path.dentry)) {
+            pr_info("[fs_helper] La directory %s esiste già\n", path_str);
+            path_put(&existing_path);
+            return 0;
+        } else {
+            pr_err("[fs_helper] %s esiste ma non è una directory\n", path_str);
+            path_put(&existing_path);
+            return -ENOTDIR;
+        }
     }
 
-    pr_info("[snapshot] La directory /prova1 non esiste, la creo\n");
-
-    // Trova la root "/"
-    ret = kern_path("/", LOOKUP_DIRECTORY, &path);
-    if (ret != 0) {
-        pr_err("[snapshot] Errore nel trovare la root /\n");
-        return ret;
+    // 2️⃣ Se non esiste, prepariamo la creazione
+    dentry = kern_path_create(AT_FDCWD, path_str, &path, LOOKUP_DIRECTORY);
+    if (IS_ERR(dentry)) {
+        pr_err("[fs_helper] Errore nella preparazione della creazione della directory %s\n", path_str);
+        return PTR_ERR(dentry);
     }
 
-    // Crea la directory /prova1
-    inode_dir = d_inode(path.dentry);
-    dentry = d_alloc_name(path.dentry, "prova1");
-    if (!dentry) {
-        pr_err("[snapshot] Impossibile allocare dentry per /prova1\n");
-        path_put(&path);
-        return -ENOMEM;
+    idmap = mnt_idmap(path.mnt);
+
+    ret = vfs_mkdir(idmap, d_inode(path.dentry), dentry, mode);
+    if (ret < 0) {
+        pr_err("[fs_helper] Errore nella creazione della directory %s: %d\n", path_str, ret);
+    } else {
+        pr_info("[fs_helper] Directory %s creata correttamente\n", path_str);
     }
 
-    ret = vfs_mkdir(mnt_idmap(path.mnt), inode_dir, dentry, 0755);
-    if (ret != 0) {
-        pr_err("[snapshot] Creazione /prova1 fallita: %d\n", ret);
-        dput(dentry);
-        path_put(&path);
-        return ret;
-    }
-
-    pr_info("[snapshot] Directory /prova1 creata con successo\n");
-
-    dput(dentry);
-    path_put(&path);
-    return 0;
+    done_path_create(&path, dentry);
+    return ret;
 }
 
 int create_device_directory(char *dev_name)
