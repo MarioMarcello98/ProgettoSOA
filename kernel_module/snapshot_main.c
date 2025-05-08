@@ -1,5 +1,6 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
+#include <linux/string.h> 
 #include <linux/init.h>
 #include <linux/fs.h>         
 #include <linux/time.h>       
@@ -21,41 +22,77 @@
 #include <linux/device.h>
 #include <linux/ioctl.h>
 #include <linux/kprobes.h>
-
-
+#include <linux/workqueue.h>
+#include <linux/uaccess.h>  
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Marcello Mario");
 MODULE_DESCRIPTION("Snapshot service for block devices");
 MODULE_VERSION("0.1");
 
-static struct kprobe kp;
 
-static int handler_pre(struct kprobe *p, struct pt_regs *regs)
+
+
+static char *normalize_dev_name(const char *dev_name)
 {
-    const char __user *dev_name_user;
-    char dev_name[256];
+    char *normalized_name;
+    struct path path;
+    char *buf;
 
-#if defined(__x86_64__)
-    dev_name_user = (const char __user *)regs->dx;
-#elif defined(__aarch64__)
-    dev_name_user = (const char __user *)regs->x2;
-#else
-#error "Architettura non supportata"
-#endif
+    normalized_name = kzalloc(MAX_DEV_NAME_LEN, GFP_KERNEL);
+    if (!normalized_name)
+        return NULL;
 
-    if (dev_name_user && strncpy_from_user(dev_name, dev_name_user, sizeof(dev_name)) > 0) {
-        dev_name[sizeof(dev_name) - 1] = '\0';
-        pr_info("[snapshot] Mount intercettato via kprobe: dev_name=%s\n", dev_name);
-
-        if (is_snapshot_active(dev_name)) {
-            pr_info("[snapshot] Snapshot attivo su %s, creando directory snapshot\n", dev_name);
-            create_device_directory(dev_name);
-        }
+    if (strncmp(dev_name, "/dev/", 5) != 0) {
+        snprintf(normalized_name, MAX_DEV_NAME_LEN, "/dev/%s", dev_name);
+    } else {
+        strscpy(normalized_name, dev_name, MAX_DEV_NAME_LEN);
     }
+
+    if (kern_path(normalized_name, LOOKUP_FOLLOW, &path) == 0) {
+        buf = (char *)__get_free_page(GFP_KERNEL);
+        if (buf) {
+            char *canonical_path = d_path(&path, buf, PAGE_SIZE);
+            strscpy(normalized_name, canonical_path, MAX_DEV_NAME_LEN);
+            free_page((unsigned long)buf);
+        }
+        path_put(&path);
+    }
+
+    return normalized_name;
+}
+
+struct snapshot_work {
+    struct work_struct work;
+    char dev_name[NAME_MAX];  
+};
+
+
+static struct kprobe kp = {
+    .symbol_name = "path_mount",
+};
+
+static int handler_pre(struct kprobe *p, struct pt_regs *regs) {
+    #if defined(__x86_64__)
+        char dev_name[NAME_MAX];
+
+        const char *kernel_dev_name = (const char *)regs->di;
+
+        if (kernel_dev_name) {
+            strscpy(dev_name, kernel_dev_name, NAME_MAX - 1);
+            dev_name[NAME_MAX - 1] = '\0';  
+            
+            pr_info("[snapshot] Montaggio intercettato! Nome dispositivo: %s\n", dev_name);
+        } else {
+            pr_warn("[snapshot] Indirizzo dev_name (regs->di) non valido!\n");
+        }
+    #else
+        pr_warn("[snapshot] Architettura non supportata per l'accesso ai registri!\n");
+    #endif
 
     return 0;
 }
+
 
 static struct class *snapshot_class;
 static struct device *snapshot_device;
@@ -70,7 +107,6 @@ static struct file_operations snapshot_fops = {
     .compat_ioctl = snapshot_compat_ioctl,
 #endif
 };
-
 
 #include <linux/uaccess.h>  
 long snapshot_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
@@ -104,12 +140,9 @@ long snapshot_compat_ioctl(struct file *file, unsigned int cmd, unsigned long ar
 }
 #endif
 
-
-
-
-
 int activate_snapshot(char *dev_name, char *passwd) {
     int ret;
+    char *normalized_dev_name;
 
     if (!is_root_user()) {
         pr_warn("[snapshot] Operazione non permessa: solo root può attivare snapshot\n");
@@ -121,20 +154,20 @@ int activate_snapshot(char *dev_name, char *passwd) {
         return -EACCES;
     }
 
-    if (is_snapshot_active(dev_name)) {
-        pr_warn("[snapshot] Snapshot già attivo per %s\n", dev_name);
+    normalized_dev_name = normalize_dev_name(dev_name);
+    if (!normalized_dev_name) {
+        pr_err("[snapshot] Errore nella normalizzazione del nome del dispositivo\n");
+        return -EINVAL;
+    }
+
+    if (is_snapshot_active(normalized_dev_name)) {
+        pr_warn("[snapshot] Snapshot già attivo per %s\n", normalized_dev_name);
+        kfree(normalized_dev_name);
         return -EEXIST;
     }
 
-    pr_info("[snapshot] Attivazione snapshot per %s\n", dev_name);
-
-    ret = create_snapshot_directory("/prova1");
-    if (ret < 0) {
-        pr_err("[snapshot] Creazione directory snapshot fallita per %s\n", dev_name);
-        return ret;
-    }
-
-    ret = add_snapshot_device(dev_name);
+    ret = add_snapshot_device(normalized_dev_name);
+    kfree(normalized_dev_name);
     if (ret < 0) {
         pr_err("[snapshot] Errore nell'aggiunta alla lista snapshot: %s\n", dev_name);
         return ret;
@@ -146,6 +179,7 @@ int activate_snapshot(char *dev_name, char *passwd) {
 
 int deactivate_snapshot(char *dev_name, char *passwd) {
     int ret;
+    char *normalized_dev_name;
 
     if (!is_root_user()) {
         pr_warn("[snapshot] Operazione non permessa: solo root può disattivare snapshot\n");
@@ -157,12 +191,20 @@ int deactivate_snapshot(char *dev_name, char *passwd) {
         return -EACCES;
     }
 
-    if (!is_snapshot_active(dev_name)) {
-        pr_warn("[snapshot] Nessuno snapshot attivo per %s\n", dev_name);
+    normalized_dev_name = normalize_dev_name(dev_name);
+    if (!normalized_dev_name) {
+        pr_err("[snapshot] Errore nella normalizzazione del nome del dispositivo\n");
+        return -EINVAL;
+    }
+
+    if (!is_snapshot_active(normalized_dev_name)) {
+        pr_warn("[snapshot] Nessuno snapshot attivo per %s\n", normalized_dev_name);
+        kfree(normalized_dev_name);
         return -ENOENT;
     }
 
-    ret = remove_snapshot_device(dev_name);
+    ret = remove_snapshot_device(normalized_dev_name);
+    kfree(normalized_dev_name);
     if (ret < 0) {
         pr_err("[snapshot] Errore nella rimozione dello snapshot per %s\n", dev_name);
         return ret;
@@ -205,18 +247,18 @@ static int __init snapshot_init(void)
         unregister_chrdev_region(devt, 1);
         return ret;
     }
-    kp.symbol_name = "do_mount";
+    
     kp.pre_handler = handler_pre;
 
     ret = register_kprobe(&kp);
     if (ret < 0) {
-        pr_err("[snapshot] Errore nella registrazione del kprobe: %d\n", ret);
-        unregister_chrdev_region(devt, 1);
+        pr_err("[snapshot] Errore nella registrazione del kprobe\n");
         device_destroy(snapshot_class, devt);
         class_destroy(snapshot_class);
-        cdev_del(&snapshot_cdev);
+        unregister_chrdev_region(devt, 1);
         return ret;
     }
+
     create_snapshot_directory("/prova2");
 
     pr_info("[snapshot] kprobe registrato su %s\n", kp.symbol_name);

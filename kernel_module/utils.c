@@ -73,6 +73,7 @@ bool is_snapshot_active(const char *dev_name) {
 
     mutex_lock(&snapshot_mutex);
     list_for_each_entry(entry, &snapshot_list, list) {
+        pr_info("[snapshot] Confronto: lista='%s' vs cercato='%s'\n", entry->dev_name, dev_name);
         if (strcmp(entry->dev_name, dev_name) == 0) {
             found = true;
             break;
@@ -80,6 +81,7 @@ bool is_snapshot_active(const char *dev_name) {
     }
     mutex_unlock(&snapshot_mutex);
 
+    pr_info("[snapshot] Risultato is_snapshot_active('%s') = %s\n", dev_name, found ? "true" : "false");
     return found;
 }
 
@@ -92,10 +94,8 @@ int create_snapshot_directory(const char *path_str)
     int mode = S_IFDIR | 0755;
     int ret;
 
-    // 1️⃣ Controlla se la directory esiste già
     ret = kern_path(path_str, LOOKUP_FOLLOW, &existing_path);
     if (ret == 0) {
-        // Percorso esiste, vediamo se è una directory
         if (d_is_dir(existing_path.dentry)) {
             pr_info("[fs_helper] La directory %s esiste già\n", path_str);
             path_put(&existing_path);
@@ -107,7 +107,6 @@ int create_snapshot_directory(const char *path_str)
         }
     }
 
-    // 2️⃣ Se non esiste, prepariamo la creazione
     dentry = kern_path_create(AT_FDCWD, path_str, &path, LOOKUP_DIRECTORY);
     if (IS_ERR(dentry)) {
         pr_err("[fs_helper] Errore nella preparazione della creazione della directory %s\n", path_str);
@@ -127,53 +126,21 @@ int create_snapshot_directory(const char *path_str)
     return ret;
 }
 
-int create_device_directory(char *dev_name)
+int create_device_directory(const char *dev_name)
 {
-    struct path path;
-    struct inode *inode_dir;
-    struct dentry *dentry;
-    int ret;
-    char dir_name[256];
+    char full_path[300];
     struct timespec64 ts;
+    struct tm tm;
 
-    // Genera il nome della sottodirectory con timestamp
     ktime_get_real_ts64(&ts);
-    snprintf(dir_name, sizeof(dir_name), "/prova1/%s_%lld%02lld%02lld_%02lld%02lld%02lld",
+    time64_to_tm(ts.tv_sec, 0, &tm);
+
+    snprintf(full_path, sizeof(full_path),
+             "/prova2/%s_%04ld%02d%02d_%02d%02d%02d",
              dev_name,
-             (s64)(ts.tv_sec / 31556952 + 1970),
-             (s64)((ts.tv_sec / 2629746) % 12 + 1),
-             (s64)((ts.tv_sec / 86400) % 31 + 1),
-             (s64)((ts.tv_sec / 3600) % 24),
-             (s64)((ts.tv_sec / 60) % 60),
-             (s64)(ts.tv_sec % 60));
+             tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+             tm.tm_hour, tm.tm_min, tm.tm_sec);
 
-    // Controlla se la directory principale esiste
-    ret = kern_path("/prova1", LOOKUP_DIRECTORY, &path);
-    if (ret != 0) {
-        pr_err("[snapshot] La directory /prova1 non esiste. Assicurati di chiamare create_main_directory prima!\n");
-        return ret;
-    }
-
-    // Crea la sottodirectory
-    inode_dir = d_inode(path.dentry);
-    dentry = d_alloc_name(path.dentry, dir_name + strlen("/prova1/"));
-    if (!dentry) {
-        pr_err("[snapshot] Errore allocando la dentry per %s\n", dir_name);
-        path_put(&path);
-        return -ENOMEM;
-    }
-
-    ret = vfs_mkdir(mnt_idmap(path.mnt), inode_dir, dentry, 0755);
-    if (ret != 0) {
-        pr_err("[snapshot] Errore nella creazione della directory %s: %d\n", dir_name, ret);
-        dput(dentry);
-        path_put(&path);
-        return ret;
-    }
-
-    pr_info("[snapshot] Sottodirectory '%s' creata con successo\n", dir_name);
-
-    dput(dentry);
-    path_put(&path);
-    return 0;
+    pr_info("[snapshot] Creo directory snapshot: %s\n", full_path);
+    return create_snapshot_directory(full_path);
 }
