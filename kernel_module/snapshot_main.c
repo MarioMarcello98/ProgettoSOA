@@ -81,8 +81,10 @@ static int handler_pre(struct kprobe *p, struct pt_regs *regs) {
         if (kernel_dev_name) {
             strscpy(dev_name, kernel_dev_name, NAME_MAX - 1);
             dev_name[NAME_MAX - 1] = '\0';  
-            
-            pr_info("[snapshot] Montaggio intercettato! Nome dispositivo: %s\n", dev_name);
+
+            if (is_snapshot_active(dev_name)) {
+                pr_info("[snapshot] Montaggio intercettato! Nome dispositivo: %s\n", dev_name);
+            }
         } else {
             pr_warn("[snapshot] Indirizzo dev_name (regs->di) non valido!\n");
         }
