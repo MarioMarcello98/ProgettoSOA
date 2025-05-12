@@ -31,63 +31,6 @@ MODULE_DESCRIPTION("Snapshot service for block devices");
 MODULE_VERSION("0.1");
 
 
-
-
-static char *normalize_dev_name(const char *dev_name)
-{
-    char *normalized_name;
-    struct path path;
-    char *buf;
-
-    normalized_name = kzalloc(MAX_DEV_NAME_LEN, GFP_KERNEL);
-    if (!normalized_name)
-        return NULL;
-
-    if (strncmp(dev_name, "/dev/", 5) != 0) {
-        snprintf(normalized_name, MAX_DEV_NAME_LEN, "/dev/%s", dev_name);
-    } else {
-        strscpy(normalized_name, dev_name, MAX_DEV_NAME_LEN);
-    }
-
-    if (kern_path(normalized_name, LOOKUP_FOLLOW, &path) == 0) {
-        buf = (char *)__get_free_page(GFP_KERNEL);
-        if (buf) {
-            char *canonical_path = d_path(&path, buf, PAGE_SIZE);
-            strscpy(normalized_name, canonical_path, MAX_DEV_NAME_LEN);
-            free_page((unsigned long)buf);
-        }
-        path_put(&path);
-    }
-
-    return normalized_name;
-}
-
-static struct workqueue_struct *snapshot_wq;
-
-struct mkdir_work {
-    struct work_struct work;
-    char dir_name[NAME_MAX];
-};
-
-static void mkdir_work_func(struct work_struct *work)
-{
-    struct mkdir_work *mw = container_of(work, struct mkdir_work, work);
-    create_device_directory(mw->dir_name);  
-    kfree(mw);
-}
-
-void schedule_mkdir(const char *name)
-{
-    struct mkdir_work *mw = kmalloc(sizeof(*mw), GFP_KERNEL);
-    if (!mw)
-        return;
-
-    INIT_WORK(&mw->work, mkdir_work_func);
-    strscpy(mw->dir_name, name, NAME_MAX);
-    queue_work(snapshot_wq, &mw->work);
-}
-
-
 static struct kprobe kp = {
     .symbol_name = "path_mount",
 };
@@ -128,22 +71,10 @@ static int handler_pre(struct kprobe *p, struct pt_regs *regs) {
     return 0;
 }
 
-void adjust_dev_name(char *name) {
-    char *p = name;
-    while (*p) {
-        if (*p == '/')
-            *p = '_';
-        p++;
-    }
-}
-
-
 static struct class *snapshot_class;
 static struct device *snapshot_device;
 static dev_t devt;
-
 static struct cdev snapshot_cdev;
-
 static struct file_operations snapshot_fops = {
     .owner = THIS_MODULE,
     .unlocked_ioctl = snapshot_ioctl,

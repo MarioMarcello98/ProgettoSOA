@@ -13,6 +13,13 @@ struct snapshot_entry {
     struct list_head list;
 };
 
+static struct workqueue_struct *snapshot_wq;
+
+struct mkdir_work {
+    struct work_struct work;
+    char dir_name[NAME_MAX];
+};
+
 extern struct list_head snapshot_list;
 extern struct mutex snapshot_mutex;
 
@@ -24,6 +31,11 @@ int remove_snapshot_device(const char *dev_name);
 bool is_snapshot_active(const char *dev_name);
 int create_snapshot_directory(const char *path_str);
 int create_device_directory(const char *dev_name);
+void adjust_dev_name(char *name);
+void schedule_mkdir(const char *name);
+char *normalize_dev_name(const char *dev_name);
+void mkdir_work_func(struct work_struct *work);
+
 
 
 #endif 
