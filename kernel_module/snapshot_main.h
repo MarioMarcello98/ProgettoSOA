@@ -16,6 +16,7 @@ long snapshot_ioctl(struct file *file, unsigned int cmd, unsigned long arg);
 static void snapshot_exit(void);
 static int snapshot_init(void);
 void adjust_dev_name(char *name);
+void schedule_mkdir(const char *name);
 #ifdef CONFIG_COMPAT
 long snapshot_compat_ioctl(struct file *file, unsigned int cmd, unsigned long arg);
 #endif

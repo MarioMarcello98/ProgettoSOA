@@ -37,10 +37,14 @@ static const char ____versions[]
 __used __section("__versions") =
 	"\x1c\x00\x00\x00\x2b\x2f\xec\xe3"
 	"alloc_chrdev_region\0"
+	"\x18\x00\x00\x00\xed\x25\xcd\x49"
+	"alloc_workqueue\0"
 	"\x18\x00\x00\x00\xc2\x9c\xc4\x13"
 	"_copy_from_user\0"
 	"\x14\x00\x00\x00\x6e\x4a\x6e\x65"
 	"snprintf\0\0\0\0"
+	"\x18\x00\x00\x00\x36\xf2\xb6\xc5"
+	"queue_work_on\0\0\0"
 	"\x18\x00\x00\x00\xbd\xb5\xbf\x6f"
 	"class_destroy\0\0\0"
 	"\x10\x00\x00\x00\xba\x0c\x7a\x03"
@@ -73,6 +77,8 @@ __used __section("__versions") =
 	"class_create\0\0\0\0"
 	"\x1c\x00\x00\x00\x63\xa5\x03\x4c"
 	"random_kmalloc_seed\0"
+	"\x1c\x00\x00\x00\x0c\xd2\x03\x8c"
+	"destroy_workqueue\0\0\0"
 	"\x14\x00\x00\x00\x4b\x8d\xfa\x4d"
 	"mutex_lock\0\0"
 	"\x10\x00\x00\x00\x11\x13\x92\x5a"
@@ -122,4 +128,4 @@ __used __section("__versions") =
 MODULE_INFO(depends, "");
 
 
-MODULE_INFO(srcversion, "082D9FE43AFC1D1171DA8E3");
+MODULE_INFO(srcversion, "B73B73EE5A46F5BE66DFB7F");

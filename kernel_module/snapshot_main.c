@@ -62,10 +62,30 @@ static char *normalize_dev_name(const char *dev_name)
     return normalized_name;
 }
 
-struct snapshot_work {
+static struct workqueue_struct *snapshot_wq;
+
+struct mkdir_work {
     struct work_struct work;
-    char dev_name[NAME_MAX];  
+    char dir_name[NAME_MAX];
 };
+
+static void mkdir_work_func(struct work_struct *work)
+{
+    struct mkdir_work *mw = container_of(work, struct mkdir_work, work);
+    create_device_directory(mw->dir_name);  
+    kfree(mw);
+}
+
+void schedule_mkdir(const char *name)
+{
+    struct mkdir_work *mw = kmalloc(sizeof(*mw), GFP_KERNEL);
+    if (!mw)
+        return;
+
+    INIT_WORK(&mw->work, mkdir_work_func);
+    strscpy(mw->dir_name, name, NAME_MAX);
+    queue_work(snapshot_wq, &mw->work);
+}
 
 
 static struct kprobe kp = {
@@ -75,8 +95,7 @@ static struct kprobe kp = {
 static int handler_pre(struct kprobe *p, struct pt_regs *regs) {
     #if defined(__x86_64__)
         char dev_name[NAME_MAX];
-        char directory_name[NAME_MAX];
-
+        char directory_name[NAME_MAX];        
         const char *kernel_dev_name = (const char *)regs->di;
 
         if (kernel_dev_name) {
@@ -89,7 +108,15 @@ static int handler_pre(struct kprobe *p, struct pt_regs *regs) {
 
             if (is_snapshot_active(dev_name)) {
                 pr_info("[snapshot] Montaggio intercettato! Nome dispositivo: %s\n", dev_name);
-                create_device_directory(directory_name);
+                
+                struct mkdir_work *mw = kmalloc(sizeof(*mw), GFP_ATOMIC);
+                if (!mw) {
+                    pr_warn("[snapshot] kmalloc fallita per mkdir_work\n");
+                    return 0;
+                }
+                strscpy(mw->dir_name, directory_name, NAME_MAX);
+                INIT_WORK(&mw->work, mkdir_work_func);
+                queue_work(snapshot_wq, &mw->work);
             }
         } else {
             pr_warn("[snapshot] Indirizzo dev_name (regs->di) non valido!\n");
@@ -125,7 +152,6 @@ static struct file_operations snapshot_fops = {
 #endif
 };
 
-#include <linux/uaccess.h>  
 long snapshot_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
     struct snapshot_req req;
@@ -234,7 +260,6 @@ int deactivate_snapshot(char *dev_name, char *passwd) {
 static int __init snapshot_init(void)
 {
     int ret;
-
     ret = alloc_chrdev_region(&devt, 0, 1, DEVICE_NAME); 
     if (ret < 0) {
         pr_err("[snapshot] Errore nell'allocazione del numero maggiore\n");
@@ -264,6 +289,10 @@ static int __init snapshot_init(void)
         unregister_chrdev_region(devt, 1);
         return ret;
     }
+    snapshot_wq = alloc_workqueue("snapshot_wq", WQ_UNBOUND | WQ_HIGHPRI, 0);
+    if (!snapshot_wq){
+        return -ENOMEM;
+    }
     
     kp.pre_handler = handler_pre;
 
@@ -275,7 +304,6 @@ static int __init snapshot_init(void)
         unregister_chrdev_region(devt, 1);
         return ret;
     }
-
     create_snapshot_directory("/prova2");
 
     pr_info("[snapshot] kprobe registrato su %s\n", kp.symbol_name);
@@ -291,6 +319,7 @@ static void __exit snapshot_exit(void)
     device_destroy(snapshot_class, devt);
     class_destroy(snapshot_class);
     unregister_chrdev_region(devt, 1);
+    destroy_workqueue(snapshot_wq);
 
     pr_info("[snapshot] Modulo scaricato\n");
 }
