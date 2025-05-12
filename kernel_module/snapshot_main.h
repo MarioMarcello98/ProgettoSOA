@@ -15,6 +15,7 @@ int deactivate_snapshot(char *dev_name, char *passwd);
 long snapshot_ioctl(struct file *file, unsigned int cmd, unsigned long arg);
 static void snapshot_exit(void);
 static int snapshot_init(void);
+void adjust_dev_name(char *name);
 #ifdef CONFIG_COMPAT
 long snapshot_compat_ioctl(struct file *file, unsigned int cmd, unsigned long arg);
 #endif

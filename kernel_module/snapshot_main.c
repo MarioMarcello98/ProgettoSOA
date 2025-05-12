@@ -75,6 +75,7 @@ static struct kprobe kp = {
 static int handler_pre(struct kprobe *p, struct pt_regs *regs) {
     #if defined(__x86_64__)
         char dev_name[NAME_MAX];
+        char directory_name[NAME_MAX];
 
         const char *kernel_dev_name = (const char *)regs->di;
 
@@ -82,8 +83,13 @@ static int handler_pre(struct kprobe *p, struct pt_regs *regs) {
             strscpy(dev_name, kernel_dev_name, NAME_MAX - 1);
             dev_name[NAME_MAX - 1] = '\0';  
 
+            strscpy(directory_name, dev_name, NAME_MAX - 1);
+            directory_name[NAME_MAX - 1] = '\0';
+            adjust_dev_name(directory_name);
+
             if (is_snapshot_active(dev_name)) {
                 pr_info("[snapshot] Montaggio intercettato! Nome dispositivo: %s\n", dev_name);
+                create_device_directory(directory_name);
             }
         } else {
             pr_warn("[snapshot] Indirizzo dev_name (regs->di) non valido!\n");
@@ -93,6 +99,15 @@ static int handler_pre(struct kprobe *p, struct pt_regs *regs) {
     #endif
 
     return 0;
+}
+
+void adjust_dev_name(char *name) {
+    char *p = name;
+    while (*p) {
+        if (*p == '/')
+            *p = '_';
+        p++;
+    }
 }
 
 
