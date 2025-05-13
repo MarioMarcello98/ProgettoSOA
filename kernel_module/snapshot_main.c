@@ -24,14 +24,20 @@
 #include <linux/kprobes.h>
 #include <linux/workqueue.h>
 #include <linux/uaccess.h>  
+#include <linux/bio.h>
+#include <linux/blk_types.h>
+#include <linux/blkdev.h>
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Marcello Mario");
 MODULE_DESCRIPTION("Snapshot service for block devices");
 MODULE_VERSION("0.1");
 
+static struct kprobe write_kp = {
+    .symbol_name = "submit_bio",
+};
 
-static struct kprobe kp = {
+static struct kprobe mount_kp = {
     .symbol_name = "path_mount",
 };
 
@@ -70,6 +76,41 @@ static int handler_pre(struct kprobe *p, struct pt_regs *regs) {
 
     return 0;
 }
+
+
+
+
+static int write_handler_pre(struct kprobe *p, struct pt_regs *regs)
+{
+#if defined(__x86_64__)
+    struct bio *bio = (struct bio *)regs->di;
+
+    if (!bio)
+        return 0;
+
+    if (bio_op(bio) != REQ_OP_WRITE)
+        return 0;
+
+    struct block_device *bdev = bio->bi_bdev;
+    if (!bdev)
+        return 0;
+
+    const char *disk_name = bdev->bd_disk->disk_name;
+    if (strcmp(disk_name, "loop80") != 0)
+        return 0;
+    sector_t sector = bio->bi_iter.bi_sector;
+    unsigned int len = bio->bi_iter.bi_size;
+
+    pr_info("[kprobe-snapshot] WRITE on device: %s - sector: %llu - size: %u bytes\n",
+        disk_name, (unsigned long long)sector, len);
+#endif
+    return 0;
+}
+
+
+
+
+
 
 static struct class *snapshot_class;
 static struct device *snapshot_device;
@@ -224,20 +265,29 @@ static int __init snapshot_init(void)
     if (!snapshot_wq){
         return -ENOMEM;
     }
-    
-    kp.pre_handler = handler_pre;
 
-    ret = register_kprobe(&kp);
+    mount_kp.pre_handler = handler_pre;
+
+    ret = register_kprobe(&mount_kp);
     if (ret < 0) {
         pr_err("[snapshot] Errore nella registrazione del kprobe\n");
         device_destroy(snapshot_class, devt);
         class_destroy(snapshot_class);
         unregister_chrdev_region(devt, 1);
+        unregister_kprobe(&write_kp);
         return ret;
     }
+
+    write_kp.pre_handler = write_handler_pre,
+    ret = register_kprobe(&write_kp);
+    if (ret < 0) {
+        pr_err("[snapshot] Errore registrazione write_kp\n");
+        return ret;
+    }
+    
     create_snapshot_directory("/prova2");
 
-    pr_info("[snapshot] kprobe registrato su %s\n", kp.symbol_name);
+    pr_info("[snapshot] kprobe registrato su %s\n", mount_kp.symbol_name);
     pr_info("[snapshot] Modulo caricato, dispositivo %s creato\n", DEVICE_NAME);
     return 0;
 }
@@ -245,7 +295,8 @@ static int __init snapshot_init(void)
 
 static void __exit snapshot_exit(void)
 {
-    unregister_kprobe(&kp);
+    unregister_kprobe(&mount_kp);
+    unregister_kprobe(&write_kp);
     cdev_del(&snapshot_cdev);
     device_destroy(snapshot_class, devt);
     class_destroy(snapshot_class);

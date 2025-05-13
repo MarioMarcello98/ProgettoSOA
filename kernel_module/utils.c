@@ -144,7 +144,7 @@ int create_device_directory(const char *dev_name)
     pr_info("[snapshot] Creo directory snapshot: %s\n", full_path);
     return create_snapshot_directory(full_path);
 }
-// AGGIUNGERE PROTOTYPE DA QUI
+
 char *normalize_dev_name(const char *dev_name)
 {
     char *normalized_name;
@@ -199,4 +199,22 @@ void adjust_dev_name(char *name) {
             *p = '_';
         p++;
     }
+}
+
+void snapshot_write_worker(struct work_struct *work) {
+    struct snapshot_write_work *sw = container_of(work, struct snapshot_write_work, work);
+
+    char path[256];
+    snprintf(path, sizeof(path), "/snapshot/%s/blk_%llu", sw->dev_name, (unsigned long long)sw->sector);
+
+    struct file *file = filp_open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    if (!IS_ERR(file)) {
+        kernel_write(file, sw->data, sw->len, 0);
+        filp_close(file, NULL);
+    } else {
+        pr_warn("[snapshot] filp_open fallita per %s\n", path);
+    }
+
+    kfree(sw->data);
+    kfree(sw);
 }

@@ -15,6 +15,14 @@ struct snapshot_entry {
 
 static struct workqueue_struct *snapshot_wq;
 
+struct snapshot_write_work {
+    struct work_struct work;
+    char dev_name[NAME_MAX];
+    sector_t sector;
+    unsigned int len;
+    char *data;
+};
+
 struct mkdir_work {
     struct work_struct work;
     char dir_name[NAME_MAX];
@@ -35,6 +43,7 @@ void adjust_dev_name(char *name);
 void schedule_mkdir(const char *name);
 char *normalize_dev_name(const char *dev_name);
 void mkdir_work_func(struct work_struct *work);
+void snapshot_write_worker(struct work_struct *work);
 
 
 
