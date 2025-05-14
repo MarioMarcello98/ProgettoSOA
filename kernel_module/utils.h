@@ -28,6 +28,12 @@ struct mkdir_work {
     char dir_name[NAME_MAX];
 };
 
+struct snapshot_lookup_ctx {
+    struct dir_context ctx;
+    const char *dev_name;
+    char latest[NAME_MAX];
+};
+
 extern struct list_head snapshot_list;
 extern struct mutex snapshot_mutex;
 
@@ -44,6 +50,7 @@ void schedule_mkdir(const char *name);
 char *normalize_dev_name(const char *dev_name);
 void mkdir_work_func(struct work_struct *work);
 void snapshot_write_worker(struct work_struct *work);
+char *find_latest_snapshot_dir(const char *dev_name);
 
 
 

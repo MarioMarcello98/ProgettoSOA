@@ -14,6 +14,7 @@
 #include <linux/list.h>
 #include <linux/mutex.h>
 #include <linux/slab.h>
+#include <linux/dirent.h>
 #include "utils.h"
 
 MODULE_LICENSE("GPL");
@@ -73,7 +74,6 @@ bool is_snapshot_active(const char *dev_name) {
 
     mutex_lock(&snapshot_mutex);
     list_for_each_entry(entry, &snapshot_list, list) {
-        pr_info("[snapshot] Confronto: lista='%s' vs cercato='%s'\n", entry->dev_name, dev_name);
         if (strcmp(entry->dev_name, dev_name) == 0) {
             found = true;
             break;
@@ -81,7 +81,6 @@ bool is_snapshot_active(const char *dev_name) {
     }
     mutex_unlock(&snapshot_mutex);
 
-    pr_info("[snapshot] Risultato is_snapshot_active('%s') = %s\n", dev_name, found ? "true" : "false");
     return found;
 }
 
@@ -148,8 +147,6 @@ int create_device_directory(const char *dev_name)
 char *normalize_dev_name(const char *dev_name)
 {
     char *normalized_name;
-    struct path path;
-    char *buf;
 
     normalized_name = kzalloc(MAX_DEV_NAME_LEN, GFP_KERNEL);
     if (!normalized_name)
@@ -160,17 +157,6 @@ char *normalize_dev_name(const char *dev_name)
     } else {
         strscpy(normalized_name, dev_name, MAX_DEV_NAME_LEN);
     }
-
-    if (kern_path(normalized_name, LOOKUP_FOLLOW, &path) == 0) {
-        buf = (char *)__get_free_page(GFP_KERNEL);
-        if (buf) {
-            char *canonical_path = d_path(&path, buf, PAGE_SIZE);
-            strscpy(normalized_name, canonical_path, MAX_DEV_NAME_LEN);
-            free_page((unsigned long)buf);
-        }
-        path_put(&path);
-    }
-
     return normalized_name;
 }
 
@@ -204,17 +190,83 @@ void adjust_dev_name(char *name) {
 void snapshot_write_worker(struct work_struct *work) {
     struct snapshot_write_work *sw = container_of(work, struct snapshot_write_work, work);
 
-    char path[256];
-    snprintf(path, sizeof(path), "/snapshot/%s/blk_%llu", sw->dev_name, (unsigned long long)sw->sector);
+    char *dir_path = kmalloc(PATH_MAX, GFP_KERNEL);
+    if (!dir_path)
+        goto out;
 
-    struct file *file = filp_open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    const char *snapshot_dir = find_latest_snapshot_dir(sw->dev_name);
+    if (!snapshot_dir)
+        goto out_free_path;
+
+    snprintf(dir_path, PATH_MAX, "%s/blk_%llu", snapshot_dir, (unsigned long long)sw->sector);
+
+    // Verifica se il file esiste già (abbiamo già salvato il blocco)
+    struct file *check = filp_open(dir_path, O_RDONLY, 0);
+    if (!IS_ERR(check)) {
+        filp_close(check, NULL);
+        pr_warn("[snapshot] blocco già salvato");
+        goto out_free_path;
+    }
+
+    // Scrive il blocco originale
+    struct file *file = filp_open(dir_path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
     if (!IS_ERR(file)) {
         kernel_write(file, sw->data, sw->len, 0);
         filp_close(file, NULL);
     } else {
-        pr_warn("[snapshot] filp_open fallita per %s\n", path);
+        pr_warn("[snapshot] filp_open fallita per %s\n", dir_path);
     }
 
+out_free_path:
+    kfree(dir_path);
+out:
     kfree(sw->data);
     kfree(sw);
+}
+
+
+
+
+
+
+static bool snapshot_filldir(struct dir_context *ctx, const char *name, int namlen,
+                             loff_t offset, u64 ino, unsigned int d_type)
+{
+    struct snapshot_lookup_ctx *lookup = container_of(ctx, struct snapshot_lookup_ctx, ctx);
+
+    char prefix[32];
+    snprintf(prefix, sizeof(prefix), "_dev_%s_", lookup->dev_name);  
+
+    if (strncmp(name, prefix, strlen(prefix)) == 0) {
+        if (strcmp(name, lookup->latest) > 0)
+            strscpy(lookup->latest, name, NAME_MAX);
+    }
+
+    return true;
+}
+
+char *find_latest_snapshot_dir(const char *dev_name)
+{
+    static char result_path[PATH_MAX];
+    struct file *dir;
+
+    struct snapshot_lookup_ctx lookup = {
+        .ctx.actor = snapshot_filldir,
+        .ctx.pos = 0,
+        .dev_name = dev_name,
+        .latest = "",
+    };
+
+    dir = filp_open("/prova2", O_RDONLY | O_DIRECTORY, 0);
+    if (IS_ERR(dir))
+        return NULL;
+
+    iterate_dir(dir, &lookup.ctx);
+    filp_close(dir, NULL);
+
+    if (lookup.latest[0] == '\0')
+        return NULL;
+
+    snprintf(result_path, PATH_MAX, "/prova2/%s", lookup.latest);
+    return result_path;
 }

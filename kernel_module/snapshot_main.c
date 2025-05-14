@@ -11,13 +11,8 @@
 #include <linux/errno.h>
 #include <linux/dcache.h>
 #include <linux/mount.h>
-#include <linux/string.h>
 #include <linux/list.h>
 #include <linux/mutex.h>
-#include <linux/slab.h>
-#include "snapshot_main.h"
-#include "utils.h"
-#include <linux/fs.h>         
 #include <linux/cdev.h>
 #include <linux/device.h>
 #include <linux/ioctl.h>
@@ -27,6 +22,8 @@
 #include <linux/bio.h>
 #include <linux/blk_types.h>
 #include <linux/blkdev.h>
+#include "snapshot_main.h"
+#include "utils.h"
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Marcello Mario");
@@ -79,8 +76,7 @@ static int handler_pre(struct kprobe *p, struct pt_regs *regs) {
 
 
 
-
-static int write_handler_pre(struct kprobe *p, struct pt_regs *regs)
+/*static int write_handler_pre(struct kprobe *p, struct pt_regs *regs)
 {
 #if defined(__x86_64__)
     struct bio *bio = (struct bio *)regs->di;
@@ -96,7 +92,10 @@ static int write_handler_pre(struct kprobe *p, struct pt_regs *regs)
         return 0;
 
     const char *disk_name = bdev->bd_disk->disk_name;
-    if (strcmp(disk_name, "loop80") != 0)
+    char *normalized_dev_name;
+    normalized_dev_name = normalize_dev_name(disk_name);
+
+    if (!is_snapshot_active(normalize_dev_name))
         return 0;
     sector_t sector = bio->bi_iter.bi_sector;
     unsigned int len = bio->bi_iter.bi_size;
@@ -105,7 +104,69 @@ static int write_handler_pre(struct kprobe *p, struct pt_regs *regs)
         disk_name, (unsigned long long)sector, len);
 #endif
     return 0;
+}*/
+
+static int write_handler_pre(struct kprobe *p, struct pt_regs *regs)
+{
+#if defined(__x86_64__)
+    struct bio *bio = (struct bio *)regs->di;
+
+    if (!bio || bio_op(bio) != REQ_OP_WRITE)
+        return 0;
+
+    struct block_device *bdev = bio->bi_bdev;
+    if (!bdev)
+        return 0;
+
+    const char *disk_name = bdev->bd_disk->disk_name;
+    char dev_path[MAX_DEV_NAME_LEN];
+    snprintf(dev_path, MAX_DEV_NAME_LEN, "/dev/%s", disk_name);
+
+    if (!is_snapshot_active(dev_path))
+        return 0;
+
+    sector_t sector = bio->bi_iter.bi_sector;
+    unsigned int len = bio->bi_iter.bi_size;
+
+    pr_info("[kprobe-snapshot] WRITE intercettata su %s, settore: %llu, dimensione: %u\n",
+            dev_path, (unsigned long long)sector, len);
+
+    struct snapshot_write_work *sw = kmalloc(sizeof(*sw), GFP_ATOMIC);
+    if (!sw)
+        return 0;
+
+    sw->data = kmalloc(len, GFP_ATOMIC);
+    if (!sw->data) {
+        kfree(sw);
+        return 0;
+    }
+
+    // Copia i dati dal bio nel buffer allocato
+    if (bio_data_dir(bio) == WRITE) {
+        struct bio_vec bvec;
+        struct bvec_iter iter;
+        void *ptr = sw->data;
+        bio_for_each_segment(bvec, bio, iter) {
+            void *iovec_data = kmap_atomic(bvec.bv_page) + bvec.bv_offset;
+            memcpy(ptr, iovec_data, bvec.bv_len);
+            kunmap_atomic(iovec_data);
+            ptr += bvec.bv_len;
+        }
+    }
+
+    strscpy(sw->dev_name, disk_name, NAME_MAX);
+    sw->sector = sector;
+    sw->len = len;
+
+    INIT_WORK(&sw->work, snapshot_write_worker);
+    queue_work(snapshot_wq, &sw->work);
+#endif
+    return 0;
 }
+
+
+
+
 
 
 
