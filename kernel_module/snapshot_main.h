@@ -10,6 +10,10 @@ struct snapshot_req {
     char password[128];
 };
 
+struct mount_probe_data {
+    char dev_name[NAME_MAX];
+};
+
 int activate_snapshot(char *dev_name, char *passwd);
 int deactivate_snapshot(char *dev_name, char *passwd);
 long snapshot_ioctl(struct file *file, unsigned int cmd, unsigned long arg);

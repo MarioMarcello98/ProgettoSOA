@@ -25,6 +25,10 @@
 #include "snapshot_main.h"
 #include "utils.h"
 
+
+static int mount_entry_handler(struct kretprobe_instance *ri, struct pt_regs *regs);
+static int mount_ret_handler(struct kretprobe_instance *ri, struct pt_regs *regs);
+
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Marcello Mario");
 MODULE_DESCRIPTION("Snapshot service for block devices");
@@ -34,42 +38,79 @@ static struct kprobe write_kp = {
     .symbol_name = "submit_bio",
 };
 
-static struct kprobe mount_kp = {
-    .symbol_name = "path_mount",
+static struct kretprobe mount_kretprobe = {
+    .kp.symbol_name = "path_mount",
+    .entry_handler = mount_entry_handler,
+    .handler = mount_ret_handler,
+    .data_size = sizeof(struct mount_probe_data),
+    .maxactive = 20,  
 };
 
-static int handler_pre(struct kprobe *p, struct pt_regs *regs) {
-    #if defined(__x86_64__)
-        char dev_name[NAME_MAX];
-        char directory_name[NAME_MAX];        
-        const char *kernel_dev_name = (const char *)regs->di;
 
-        if (kernel_dev_name) {
-            strscpy(dev_name, kernel_dev_name, NAME_MAX - 1);
-            dev_name[NAME_MAX - 1] = '\0';  
+static int mount_entry_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
+{
+#if defined(__x86_64__)
+    const char __user *user_dev_name = (const char __user *)regs->di;
+    struct mount_probe_data *data = (struct mount_probe_data *)ri->data;
 
-            strscpy(directory_name, dev_name, NAME_MAX - 1);
-            directory_name[NAME_MAX - 1] = '\0';
-            adjust_dev_name(directory_name);
+    if (!user_dev_name) {
+        pr_warn("[snapshot] [mount_entry_handler] dev_name è NULL\n");
+        return 0;
+    }
 
-            if (is_snapshot_active(dev_name)) {
-                pr_info("[snapshot] Montaggio intercettato! Nome dispositivo: %s\n", dev_name);
-                
-                struct mkdir_work *mw = kmalloc(sizeof(*mw), GFP_ATOMIC);
-                if (!mw) {
-                    pr_warn("[snapshot] kmalloc fallita per mkdir_work\n");
-                    return 0;
-                }
-                strscpy(mw->dir_name, directory_name, NAME_MAX);
-                INIT_WORK(&mw->work, mkdir_work_func);
-                queue_work(snapshot_wq, &mw->work);
+    strscpy(data->dev_name, user_dev_name, NAME_MAX - 1);
+data->dev_name[NAME_MAX - 1] = '\0';
+pr_info("[snapshot] [mount_entry_handler] dev_name copiato (no user): %s\n", data->dev_name);
+
+    data->dev_name[NAME_MAX - 1] = '\0';
+    pr_info("[snapshot] [mount_entry_handler] dev_name copiato: %s\n", data->dev_name);
+#endif
+    return 0;
+}
+
+static int mount_ret_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
+{
+    long ret = regs_return_value(regs);
+    struct mount_probe_data *data = (struct mount_probe_data *)ri->data;
+
+    pr_info("[snapshot] [mount_ret_handler] mount ret = %ld\n", ret);
+    pr_info("[snapshot] [mount_ret_handler] dev_name = %s\n", data->dev_name);
+
+    if (ret == 0) {
+        if (is_snapshot_active(data->dev_name)) {
+            pr_info("[snapshot] [mount_ret_handler] snapshot attivo per %s\n", data->dev_name);
+
+            char adjusted[NAME_MAX];
+            strscpy(adjusted, data->dev_name, NAME_MAX);
+            adjust_dev_name(adjusted);
+            pr_info("[snapshot] [mount_ret_handler] dev_name normalizzato: %s\n", adjusted);
+
+            char *normalized = normalize_dev_name(data->dev_name); // es: /dev/loop7777
+            if (!normalized) {
+                pr_err("[snapshot] [mount_ret_handler] normalize_dev_name fallita\n");
+                return 0;
             }
+
+            struct mkdir_work *mw = kmalloc(sizeof(*mw), GFP_KERNEL);
+            if (!mw) {
+                kfree(normalized);
+                pr_warn("[snapshot] [mount_ret_handler] kmalloc fallita per mkdir_work\n");
+                return 0;
+            }
+
+            strscpy(mw->adjusted_name, adjusted, NAME_MAX);
+            strscpy(mw->original_path, normalized, MAX_DEV_NAME_LEN);
+            INIT_WORK(&mw->work, mkdir_work_func);
+            queue_work(snapshot_wq, &mw->work);
+            pr_info("[snapshot] [mount_ret_handler] mkdir_work schedulato per %s\n", adjusted);
+
+            kfree(normalized);
         } else {
-            pr_warn("[snapshot] Indirizzo dev_name (regs->di) non valido!\n");
+            pr_info("[snapshot] [mount_ret_handler] snapshot NON attivo per %s\n", data->dev_name);
         }
-    #else
-        pr_warn("[snapshot] Architettura non supportata per l'accesso ai registri!\n");
-    #endif
+    } else {
+        pr_info("[snapshot] [mount_ret_handler] mount fallito, nessuna azione\n");
+    }
 
     return 0;
 }
@@ -327,17 +368,17 @@ static int __init snapshot_init(void)
         return -ENOMEM;
     }
 
-    mount_kp.pre_handler = handler_pre;
 
-    ret = register_kprobe(&mount_kp);
+    ret = register_kretprobe(&mount_kretprobe);
     if (ret < 0) {
-        pr_err("[snapshot] Errore nella registrazione del kprobe\n");
+        pr_err("[snapshot] Errore nella registrazione del kretprobe su path_mount: %d\n", ret);
         device_destroy(snapshot_class, devt);
         class_destroy(snapshot_class);
         unregister_chrdev_region(devt, 1);
-        unregister_kprobe(&write_kp);
         return ret;
     }
+    pr_info("[snapshot] kretprobe registrato su %s\n", mount_kretprobe.kp.symbol_name);
+
 
     write_kp.pre_handler = write_handler_pre,
     ret = register_kprobe(&write_kp);
@@ -348,7 +389,7 @@ static int __init snapshot_init(void)
     
     create_snapshot_directory("/prova2");
 
-    pr_info("[snapshot] kprobe registrato su %s\n", mount_kp.symbol_name);
+    pr_info("[snapshot] kretprobe registrato su %s\n", mount_kretprobe.kp.symbol_name);
     pr_info("[snapshot] Modulo caricato, dispositivo %s creato\n", DEVICE_NAME);
     return 0;
 }
@@ -356,7 +397,7 @@ static int __init snapshot_init(void)
 
 static void __exit snapshot_exit(void)
 {
-    unregister_kprobe(&mount_kp);
+    unregister_kretprobe(&mount_kretprobe);
     unregister_kprobe(&write_kp);
     cdev_del(&snapshot_cdev);
     device_destroy(snapshot_class, devt);
