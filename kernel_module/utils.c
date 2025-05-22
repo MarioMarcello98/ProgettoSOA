@@ -15,8 +15,13 @@
 #include <linux/mutex.h>
 #include <linux/slab.h>
 #include <linux/dirent.h>
-#include <linux/fs.h>             // per struct block_device
-#include <linux/blkdev.h>         // per blkdev_get_by_path, blkdev_put
+#include <linux/fs.h>            
+#include <linux/blkdev.h>       
+#include <linux/bitmap.h>
+#include <linux/fs.h>
+#include <linux/slab.h>
+#include <linux/uaccess.h>
+
 
 #include "utils.h"
 
@@ -141,7 +146,7 @@ int create_device_directory(const char *dev_name, char *out_path, size_t out_siz
              "/prova2/%s_%04ld%02d%02d_%02d%02d%02d",
              dev_name,
              tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
-             tm.tm_hour, tm.tm_min, tm.tm_sec);
+             tm.tm_hour + 2, tm.tm_min, tm.tm_sec);
 
     pr_info("[snapshot] Creo directory snapshot: %s\n", out_path);
     return create_snapshot_directory(out_path);
@@ -183,7 +188,7 @@ void mkdir_work_func(struct work_struct *work)
             goto cleanup_path;
         }
 
-        strscpy(cw->dev_name, mw->original_path, NAME_MAX);  // ⬅️ ORIGINALE
+        strscpy(cw->dev_name, mw->original_path, NAME_MAX); 
         strscpy(cw->snapshot_dir, snapshot_path, PATH_MAX);
 
         INIT_WORK(&cw->work, snapshot_copy_worker);
@@ -232,10 +237,10 @@ void snapshot_copy_worker(struct work_struct *work)
     loff_t dev_size, offset = 0;
     char *buf = NULL;
     char *file_path = NULL;
+    int ret_bitmap = 0;
 
     pr_info("[snapshot] [copy_worker] Avvio per %s in %s\n", cw->dev_name, cw->snapshot_dir);
 
-    // Apri il device
     bdev_file = filp_open(cw->dev_name, O_RDONLY | O_LARGEFILE, 0);
     if (IS_ERR(bdev_file)) {
         pr_err("[snapshot] [copy_worker] filp_open fallita su %s (err: %ld)\n",
@@ -245,6 +250,14 @@ void snapshot_copy_worker(struct work_struct *work)
 
     dev_size = i_size_read(bdev_file->f_mapping->host);
     pr_info("[snapshot] [copy_worker] Dimensione del device: %lld bytes\n", dev_size);
+
+    ret_bitmap = snapshot_init_bitmap(cw->snapshot_dir, dev_size, SNAPSHOT_BLOCK_SIZE,
+        &cw->mod_bitmap, &cw->total_blocks);
+    if (ret_bitmap) {
+        pr_err("[snapshot] Errore inizializzazione bitmap: %d\n", ret_bitmap);
+        goto close_dev;
+    }
+
 
     buf = kmalloc(SNAPSHOT_BLOCK_SIZE, GFP_KERNEL);
     if (!buf) {
@@ -285,7 +298,6 @@ void snapshot_copy_worker(struct work_struct *work)
         filp_close(outf, NULL);
         offset += ret_read;
     }
-
     pr_info("[snapshot] [copy_worker] Fine copia blocchi per %s\n", cw->dev_name);
 
     kfree(file_path);
@@ -300,41 +312,109 @@ out:
 
 
 
-void snapshot_write_worker(struct work_struct *work) {
+void modifier_bitmap_worker(struct work_struct *work)
+{
     struct snapshot_write_work *sw = container_of(work, struct snapshot_write_work, work);
 
-    char *dir_path = kmalloc(PATH_MAX, GFP_KERNEL);
-    if (!dir_path)
-        goto out;
-
     const char *snapshot_dir = find_latest_snapshot_dir(sw->dev_name);
-    if (!snapshot_dir)
-        goto out_free_path;
-
-    snprintf(dir_path, PATH_MAX, "%s/blk_%llu", snapshot_dir, (unsigned long long)sw->sector);
-
-    // Verifica se il file esiste già (abbiamo già salvato il blocco)
-    struct file *check = filp_open(dir_path, O_RDONLY, 0);
-    if (!IS_ERR(check)) {
-        filp_close(check, NULL);
-        pr_warn("[snapshot] blocco già salvato");
-        goto out_free_path;
+    if (!snapshot_dir) {
+        pr_err("[snapshot-worker] snapshot_dir non trovato per %s\n", sw->dev_name);
+        goto out;
     }
 
-    // Scrive il blocco originale
-    struct file *file = filp_open(dir_path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
-    if (!IS_ERR(file)) {
-        kernel_write(file, sw->data, sw->len, 0);
-        filp_close(file, NULL);
-    } else {
-        pr_warn("[snapshot] filp_open fallita per %s\n", dir_path);
+    char *bitmap_path = kmalloc(PATH_MAX, GFP_KERNEL);
+    if (!bitmap_path)
+        return;
+
+    snprintf(bitmap_path, PATH_MAX, "%s/mod_bitmap.bin", snapshot_dir);
+
+    struct file *bmp_file = filp_open(bitmap_path, O_RDWR, 0);
+    if (IS_ERR(bmp_file)) {
+        pr_err("[snapshot-worker] Impossibile aprire bitmap: %s\n", bitmap_path);
+        goto out;
     }
 
-out_free_path:
-    kfree(dir_path);
+    unsigned int sectors_per_block = SNAPSHOT_BLOCK_SIZE / 512;
+    sector_t start_sector = sw->sector;
+    sector_t end_sector = sw->sector + (sw->len / 512) - 1;
+
+    sector_t start_block = start_sector / sectors_per_block;
+    sector_t end_block   = end_sector / sectors_per_block;
+
+    for (sector_t blk = start_block; blk <= end_block; blk++) {
+        loff_t byte_offset = blk / 8;
+        unsigned int bit_pos = blk % 8;
+        unsigned char byte;
+
+        // Leggi il byte corrente
+        loff_t pos = byte_offset;
+        ssize_t ret = kernel_read(bmp_file, &byte, 1, &pos);
+        if (ret != 1) {
+            pr_warn("[snapshot-worker] errore lettura byte bitmap (blocco %llu)\n", blk);
+            continue;
+        }
+
+        // Modifica il bit
+        byte |= (1 << bit_pos);
+
+        // Scrivi di nuovo il byte
+        pos = byte_offset;
+        ret = kernel_write(bmp_file, &byte, 1, &pos);
+        if (ret != 1) {
+            pr_warn("[snapshot-worker] errore scrittura bitmap (blocco %llu)\n", blk);
+        } else {
+            pr_debug("[snapshot-worker] bit aggiornato su disco per blocco %llu\n", blk);
+        }
+    }
+
+    filp_close(bmp_file, NULL);
+
 out:
-    kfree(sw->data);
     kfree(sw);
+    kfree(bitmap_path);
+}
+
+
+
+
+int snapshot_init_bitmap(const char *snapshot_dir, loff_t dev_size, size_t block_size,
+    unsigned long **bitmap_out, size_t *total_blocks_out){
+    char *bitmap_path = NULL;
+    struct file *bmp_file;
+    loff_t pos = 0;
+    size_t total_blocks, bitmap_size;
+    unsigned long *bitmap = NULL;
+
+    if (!snapshot_dir || !bitmap_out || !total_blocks_out)
+    return -EINVAL;
+
+    total_blocks = dev_size / block_size;
+    bitmap_size = BITS_TO_LONGS(total_blocks) * sizeof(unsigned long);
+
+    bitmap = kzalloc(bitmap_size, GFP_KERNEL);
+    if (!bitmap)
+    return -ENOMEM;
+
+    bitmap_path = kasprintf(GFP_KERNEL, "%s/mod_bitmap.bin", snapshot_dir);
+    if (!bitmap_path) {
+    kfree(bitmap);
+    return -ENOMEM;
+    }
+
+    bmp_file = filp_open(bitmap_path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    kfree(bitmap_path);
+
+    if (IS_ERR(bmp_file)) {
+    kfree(bitmap);
+    return PTR_ERR(bmp_file);
+    }   
+
+    kernel_write(bmp_file, (char *)bitmap, bitmap_size, &pos);
+    filp_close(bmp_file, NULL);
+
+    *bitmap_out = bitmap;
+    *total_blocks_out = total_blocks;
+    return 0;
 }
 
 

@@ -85,7 +85,7 @@ static int mount_ret_handler(struct kretprobe_instance *ri, struct pt_regs *regs
             adjust_dev_name(adjusted);
             pr_info("[snapshot] [mount_ret_handler] dev_name normalizzato: %s\n", adjusted);
 
-            char *normalized = normalize_dev_name(data->dev_name); // es: /dev/loop7777
+            char *normalized = normalize_dev_name(data->dev_name); 
             if (!normalized) {
                 pr_err("[snapshot] [mount_ret_handler] normalize_dev_name fallita\n");
                 return 0;
@@ -176,34 +176,18 @@ static int write_handler_pre(struct kprobe *p, struct pt_regs *regs)
     if (!sw)
         return 0;
 
-    sw->data = kmalloc(len, GFP_ATOMIC);
-    if (!sw->data) {
-        kfree(sw);
-        return 0;
-    }
-
-    // Copia i dati dal bio nel buffer allocato
-    if (bio_data_dir(bio) == WRITE) {
-        struct bio_vec bvec;
-        struct bvec_iter iter;
-        void *ptr = sw->data;
-        bio_for_each_segment(bvec, bio, iter) {
-            void *iovec_data = kmap_atomic(bvec.bv_page) + bvec.bv_offset;
-            memcpy(ptr, iovec_data, bvec.bv_len);
-            kunmap_atomic(iovec_data);
-            ptr += bvec.bv_len;
-        }
-    }
+    sw->data = NULL;  
 
     strscpy(sw->dev_name, disk_name, NAME_MAX);
     sw->sector = sector;
     sw->len = len;
 
-    INIT_WORK(&sw->work, snapshot_write_worker);
+    INIT_WORK(&sw->work, modifier_bitmap_worker);
     queue_work(snapshot_wq, &sw->work);
 #endif
     return 0;
 }
+
 
 
 

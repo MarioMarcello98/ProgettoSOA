@@ -41,6 +41,8 @@ struct snapshot_copy_work {
     struct work_struct work;
     char dev_name[NAME_MAX];
     char snapshot_dir[PATH_MAX];
+    unsigned long *mod_bitmap;
+    size_t total_blocks;
 };
 
 extern struct list_head snapshot_list;
@@ -58,10 +60,10 @@ void adjust_dev_name(char *name);
 void schedule_mkdir(const char *adjusted_name, const char *original_path);
 char *normalize_dev_name(const char *dev_name);
 void mkdir_work_func(struct work_struct *work);
-void snapshot_write_worker(struct work_struct *work);
+void modifier_bitmap_worker(struct work_struct *work);
 char *find_latest_snapshot_dir(const char *dev_name);
 void snapshot_copy_worker(struct work_struct *work);
-
+int snapshot_init_bitmap(const char *snapshot_dir, loff_t dev_size, size_t block_size, unsigned long **bitmap_out, size_t *total_blocks_out);
 
 
 #endif 
