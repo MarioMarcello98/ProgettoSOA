@@ -26,10 +26,9 @@ struct snapshot_write_work {
 
 struct mkdir_work {
     struct work_struct work;
-    char adjusted_name[NAME_MAX];   // per creare la directory
-    char original_path[MAX_DEV_NAME_LEN];  // per filp_open
+    char adjusted_name[NAME_MAX];   
+    char original_path[MAX_DEV_NAME_LEN];  
 };
-
 
 struct snapshot_lookup_ctx {
     struct dir_context ctx;
@@ -47,7 +46,6 @@ struct snapshot_copy_work {
 
 extern struct list_head snapshot_list;
 extern struct mutex snapshot_mutex;
-
 
 bool is_root_user(void);
 bool password_valid(const char *passwd);

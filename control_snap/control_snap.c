@@ -15,27 +15,23 @@ struct snapshot_req {
 
 int main(int argc, char *argv[]) {
     if (argc != 4) {
-        printf("Uso: %s <activate_snapshot|deactivate_snapshot> <dev_name> <password>\n", argv[0]);
+        printf("Uso: %s <activate|deactivate> <dev_name> <password>\n", argv[0]);
         return 1;
     }
 
-    // Decidi se attivare o disattivare in base al primo argomento
     char *action = argv[1];
 
-    // Crea un file descriptor per il dispositivo snapshot
     int fd = open("/dev/snap_device", O_RDWR);
     if (fd == -1) {
         perror("Impossibile aprire il dispositivo");
         return 1;
     }
 
-    // Crea la struttura per passare le informazioni al driver
     struct snapshot_req req;
     memset(&req, 0, sizeof(req));
     strncpy(req.dev_name, argv[2], sizeof(req.dev_name) - 1);
     strncpy(req.password, argv[3], sizeof(req.password) - 1);
 
-    // Attivazione dello snapshot
     if (strcmp(action, "activate") == 0) {
         if (ioctl(fd, SNAPSHOT_IOCTL_ACTIVATE, &req) == -1) {
             perror("Errore nell'attivazione dello snapshot");
@@ -44,7 +40,7 @@ int main(int argc, char *argv[]) {
         }
         printf("Snapshot attivato per %s\n", req.dev_name);
     } 
-    // Disattivazione dello snapshot
+
     else if (strcmp(action, "deactivate") == 0) {
         if (ioctl(fd, SNAPSHOT_IOCTL_DEACTIVATE, &req) == -1) {
             perror("Errore nella disattivazione dello snapshot");
@@ -58,7 +54,6 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // Chiude il file descriptor
     close(fd);
     return 0;
 }

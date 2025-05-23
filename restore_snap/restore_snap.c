@@ -10,7 +10,7 @@
 #include <errno.h>
 
 #define SNAPSHOT_BLOCK_SIZE 4096
-#define SNAPSHOT_DIR "/prova2"
+#define SNAPSHOT_DIR "/snapshot"
 #define BITMAP_FILE "mod_bitmap.bin"
 
 char *find_latest_snapshot_dir(const char *dev_name) {
@@ -65,8 +65,6 @@ int restore_blocks(const char *device_path, const char *dev_name) {
         close(bmp_fd);
         return -1;
     }
-
-
 
     uint8_t byte;
     size_t block_index = 0;

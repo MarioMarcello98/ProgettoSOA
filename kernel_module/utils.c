@@ -13,13 +13,8 @@
 #include <linux/string.h>
 #include <linux/list.h>
 #include <linux/mutex.h>
-#include <linux/slab.h>
-#include <linux/dirent.h>
-#include <linux/fs.h>            
 #include <linux/blkdev.h>       
 #include <linux/bitmap.h>
-#include <linux/fs.h>
-#include <linux/slab.h>
 #include <linux/uaccess.h>
 
 
@@ -93,8 +88,8 @@ bool is_snapshot_active(const char *dev_name) {
     return found;
 }
 
-int create_snapshot_directory(const char *path_str)
-{
+int create_snapshot_directory(const char *path_str) {
+
     struct path existing_path;
     struct path path;
     struct dentry *dentry;
@@ -143,7 +138,7 @@ int create_device_directory(const char *dev_name, char *out_path, size_t out_siz
     time64_to_tm(ts.tv_sec, 0, &tm);
 
     snprintf(out_path, out_size,
-             "/prova2/%s_%04ld%02d%02d_%02d%02d%02d",
+             "/snapshot/%s_%04ld%02d%02d_%02d%02d%02d",
              dev_name,
              tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
              tm.tm_hour + 2, tm.tm_min, tm.tm_sec);
@@ -205,8 +200,6 @@ cleanup:
     kfree(mw);
 }
 
-
-
 void schedule_mkdir(const char *adjusted_name, const char *original_path)
 {
     struct mkdir_work *mw = kmalloc(sizeof(*mw), GFP_KERNEL);
@@ -218,8 +211,6 @@ void schedule_mkdir(const char *adjusted_name, const char *original_path)
     strscpy(mw->original_path, original_path, MAX_DEV_NAME_LEN);
     queue_work(snapshot_wq, &mw->work);
 }
-
-
 
 void adjust_dev_name(char *name) {
     char *p = name;
@@ -257,7 +248,6 @@ void snapshot_copy_worker(struct work_struct *work)
         pr_err("[snapshot] Errore inizializzazione bitmap: %d\n", ret_bitmap);
         goto close_dev;
     }
-
 
     buf = kmalloc(SNAPSHOT_BLOCK_SIZE, GFP_KERNEL);
     if (!buf) {
@@ -309,9 +299,6 @@ out:
     kfree(cw);
 }
 
-
-
-
 void modifier_bitmap_worker(struct work_struct *work)
 {
     struct snapshot_write_work *sw = container_of(work, struct snapshot_write_work, work);
@@ -337,7 +324,6 @@ void modifier_bitmap_worker(struct work_struct *work)
     unsigned int sectors_per_block = SNAPSHOT_BLOCK_SIZE / 512;
     sector_t start_sector = sw->sector;
     sector_t end_sector = sw->sector + (sw->len / 512) - 1;
-
     sector_t start_block = start_sector / sectors_per_block;
     sector_t end_block   = end_sector / sectors_per_block;
 
@@ -346,7 +332,6 @@ void modifier_bitmap_worker(struct work_struct *work)
         unsigned int bit_pos = blk % 8;
         unsigned char byte;
 
-        // Leggi il byte corrente
         loff_t pos = byte_offset;
         ssize_t ret = kernel_read(bmp_file, &byte, 1, &pos);
         if (ret != 1) {
@@ -354,10 +339,8 @@ void modifier_bitmap_worker(struct work_struct *work)
             continue;
         }
 
-        // Modifica il bit
         byte |= (1 << bit_pos);
 
-        // Scrivi di nuovo il byte
         pos = byte_offset;
         ret = kernel_write(bmp_file, &byte, 1, &pos);
         if (ret != 1) {
@@ -374,11 +357,8 @@ out:
     kfree(bitmap_path);
 }
 
+int snapshot_init_bitmap(const char *snapshot_dir, loff_t dev_size, size_t block_size, unsigned long **bitmap_out, size_t *total_blocks_out) {
 
-
-
-int snapshot_init_bitmap(const char *snapshot_dir, loff_t dev_size, size_t block_size,
-    unsigned long **bitmap_out, size_t *total_blocks_out){
     char *bitmap_path = NULL;
     struct file *bmp_file;
     loff_t pos = 0;
@@ -417,14 +397,8 @@ int snapshot_init_bitmap(const char *snapshot_dir, loff_t dev_size, size_t block
     return 0;
 }
 
+static bool snapshot_filldir(struct dir_context *ctx, const char *name, int namlen, loff_t offset, u64 ino, unsigned int d_type) {
 
-
-
-
-
-static bool snapshot_filldir(struct dir_context *ctx, const char *name, int namlen,
-                             loff_t offset, u64 ino, unsigned int d_type)
-{
     struct snapshot_lookup_ctx *lookup = container_of(ctx, struct snapshot_lookup_ctx, ctx);
 
     char prefix[32];
@@ -450,7 +424,7 @@ char *find_latest_snapshot_dir(const char *dev_name)
         .latest = "",
     };
 
-    dir = filp_open("/prova2", O_RDONLY | O_DIRECTORY, 0);
+    dir = filp_open("/snapshot", O_RDONLY | O_DIRECTORY, 0);
     if (IS_ERR(dir))
         return NULL;
 
@@ -460,6 +434,6 @@ char *find_latest_snapshot_dir(const char *dev_name)
     if (lookup.latest[0] == '\0')
         return NULL;
 
-    snprintf(result_path, PATH_MAX, "/prova2/%s", lookup.latest);
+    snprintf(result_path, PATH_MAX, "/snapshot/%s", lookup.latest);
     return result_path;
 }

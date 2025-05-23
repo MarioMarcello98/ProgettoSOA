@@ -22,17 +22,17 @@
 #include <linux/bio.h>
 #include <linux/blk_types.h>
 #include <linux/blkdev.h>
+
 #include "snapshot_main.h"
 #include "utils.h"
-
-
-static int mount_entry_handler(struct kretprobe_instance *ri, struct pt_regs *regs);
-static int mount_ret_handler(struct kretprobe_instance *ri, struct pt_regs *regs);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Marcello Mario");
 MODULE_DESCRIPTION("Snapshot service for block devices");
 MODULE_VERSION("0.1");
+
+static int mount_entry_handler(struct kretprobe_instance *ri, struct pt_regs *regs);
+static int mount_ret_handler(struct kretprobe_instance *ri, struct pt_regs *regs);
 
 static struct kprobe write_kp = {
     .symbol_name = "submit_bio",
@@ -46,7 +46,6 @@ static struct kretprobe mount_kretprobe = {
     .maxactive = 20,  
 };
 
-
 static int mount_entry_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
 #if defined(__x86_64__)
@@ -59,9 +58,6 @@ static int mount_entry_handler(struct kretprobe_instance *ri, struct pt_regs *re
     }
 
     strscpy(data->dev_name, user_dev_name, NAME_MAX - 1);
-data->dev_name[NAME_MAX - 1] = '\0';
-pr_info("[snapshot] [mount_entry_handler] dev_name copiato (no user): %s\n", data->dev_name);
-
     data->dev_name[NAME_MAX - 1] = '\0';
     pr_info("[snapshot] [mount_entry_handler] dev_name copiato: %s\n", data->dev_name);
 #endif
@@ -115,38 +111,6 @@ static int mount_ret_handler(struct kretprobe_instance *ri, struct pt_regs *regs
     return 0;
 }
 
-
-
-/*static int write_handler_pre(struct kprobe *p, struct pt_regs *regs)
-{
-#if defined(__x86_64__)
-    struct bio *bio = (struct bio *)regs->di;
-
-    if (!bio)
-        return 0;
-
-    if (bio_op(bio) != REQ_OP_WRITE)
-        return 0;
-
-    struct block_device *bdev = bio->bi_bdev;
-    if (!bdev)
-        return 0;
-
-    const char *disk_name = bdev->bd_disk->disk_name;
-    char *normalized_dev_name;
-    normalized_dev_name = normalize_dev_name(disk_name);
-
-    if (!is_snapshot_active(normalize_dev_name))
-        return 0;
-    sector_t sector = bio->bi_iter.bi_sector;
-    unsigned int len = bio->bi_iter.bi_size;
-
-    pr_info("[kprobe-snapshot] WRITE on device: %s - sector: %llu - size: %u bytes\n",
-        disk_name, (unsigned long long)sector, len);
-#endif
-    return 0;
-}*/
-
 static int write_handler_pre(struct kprobe *p, struct pt_regs *regs)
 {
 #if defined(__x86_64__)
@@ -188,20 +152,11 @@ static int write_handler_pre(struct kprobe *p, struct pt_regs *regs)
     return 0;
 }
 
-
-
-
-
-
-
-
-
-
-
 static struct class *snapshot_class;
 static struct device *snapshot_device;
 static dev_t devt;
 static struct cdev snapshot_cdev;
+
 static struct file_operations snapshot_fops = {
     .owner = THIS_MODULE,
     .unlocked_ioctl = snapshot_ioctl,
@@ -371,9 +326,8 @@ static int __init snapshot_init(void)
         return ret;
     }
     
-    create_snapshot_directory("/prova2");
+    create_snapshot_directory("/snapshot");
 
-    pr_info("[snapshot] kretprobe registrato su %s\n", mount_kretprobe.kp.symbol_name);
     pr_info("[snapshot] Modulo caricato, dispositivo %s creato\n", DEVICE_NAME);
     return 0;
 }
