@@ -17,8 +17,8 @@ per inizializzare il filesystem --> sudo ./singlefilemakefs /dev/loopX
 per montare il device --> sudo mount -t singlefilefs /dev/loopX mount
 
 per modificare il contenuto del device entrare in SINGLE-FILEFS/user e lanciare
-./user ../mount/the-file "xxxxxxxxxxx" 0 
-("xxxxxxxxxx" indica una qualsiasi stringa)
+./user ../mount/the-file "quello che vuoi" 0 
+
 
 Per ripristinare lo snapshot sul device:
 smontare il device
