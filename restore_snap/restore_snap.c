@@ -92,7 +92,7 @@ int restore_blocks(const char *device_path, const char *dev_name) {
                     if (pwrite(dev_fd, buffer, read_len, offset) != read_len) {
                         perror("Errore scrittura blocco");
                     } else {
-                        printf("✔ Ripristinato blocco %zu\n", blk);
+                        printf("Ripristinato blocco %zu\n", blk);
                     }
                 } else {
                     fprintf(stderr, "Errore lettura blocco %s\n", blk_path);
